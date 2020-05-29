@@ -1,6 +1,8 @@
-extern crate libc as libc;
-extern crate libloading as lib;
+extern crate glfw;
+extern crate libc;
+extern crate libloading;
 
+use glfw::{Action, Context, Key};
 use libretro_sys::{CoreAPI, SystemInfo};
 use std::env;
 use std::ffi::CStr;
@@ -10,7 +12,7 @@ fn main() {
     let path = env::current_dir().unwrap();
     println!("Current dir = {}", path.display());
 
-    let lib = lib::Library::new("assets/cores/nestopia_libretro.dylib").unwrap();
+    let lib = libloading::Library::new("assets/cores/nestopia_libretro.dylib").unwrap();
     unsafe {
         //TODO: is this what I want to do??
 
@@ -19,12 +21,12 @@ fn main() {
         //            retro_get_system_info: lib.get(b"retro_get_system_info").unwrap(),
         //        };
 
-        let get_version: lib::Symbol<unsafe extern "C" fn() -> libc::c_uint> =
+        let get_version: libloading::Symbol<unsafe extern "C" fn() -> libc::c_uint> =
             lib.get(b"retro_api_version").unwrap();
         let version = get_version();
         println!("libretro api version: {}", version);
 
-        let get_system_info: lib::Symbol<unsafe extern "C" fn(info: *mut SystemInfo)> =
+        let get_system_info: libloading::Symbol<unsafe extern "C" fn(info: *mut SystemInfo)> =
             lib.get(b"retro_get_system_info").unwrap();
 
         //TODO: how to not do this??
@@ -52,5 +54,28 @@ fn main() {
             CStr::from_ptr(sys_info.valid_extensions).to_str().unwrap()
         );
         println!("  need_fullpath:{}", sys_info.need_fullpath);
+    }
+
+    let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
+
+    let (mut window, events) = glfw
+        .create_window(300, 300, "My Window", glfw::WindowMode::Windowed)
+        .expect("Couldn't create window");
+
+    window.make_current();
+    window.set_key_polling(true);
+
+    while !window.should_close() {
+        window.swap_buffers();
+
+        glfw.poll_events();
+        for (_, event) in glfw::flush_messages(&events) {
+            match event {
+                glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
+                    window.set_should_close(true);
+                }
+                _ => {}
+            }
+        }
     }
 }
