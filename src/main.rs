@@ -21,6 +21,7 @@ pub struct RetroApi<'a> {
     get_system_info: Symbol<'a, unsafe extern "C" fn(info: *mut SystemInfo)>,
 
     load_game: Symbol<'a, unsafe extern "C" fn(game: *const GameInfo) -> bool>,
+    run: Symbol<'a, unsafe extern "C" fn()>,
 
     set_environment_callback: Symbol<'a, unsafe extern "C" fn(callback: EnvironmentFn)>,
     set_video_refresh_callback: Symbol<'a, unsafe extern "C" fn(callback: VideoRefreshFn)>,
@@ -50,9 +51,10 @@ fn main() {
     window.set_key_polling(true);
 
     while !window.should_close() {
-        window.swap_buffers();
-
         glfw.poll_events();
+
+        run_emulator(&retro_api);
+
         for (_, event) in glfw::flush_messages(&events) {
             match event {
                 glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
@@ -61,6 +63,8 @@ fn main() {
                 _ => {}
             }
         }
+
+        window.swap_buffers();
     }
 }
 
@@ -158,6 +162,7 @@ fn init_retro_api(lib: &Library) -> RetroApi {
             api_version: lib.get(b"retro_api_version").unwrap(),
             get_system_info: lib.get(b"retro_get_system_info").unwrap(),
             load_game: lib.get(b"retro_load_game").unwrap(),
+            run: lib.get(b"retro_run").unwrap(),
             set_environment_callback: lib.get(b"retro_set_environment").unwrap(),
             set_video_refresh_callback: lib.get(b"retro_set_video_refresh").unwrap(),
             set_audio_sample_callback: lib.get(b"retro_set_audio_sample").unwrap(),
@@ -179,6 +184,12 @@ fn init_retro_api(lib: &Library) -> RetroApi {
     }
 }
 
+fn run_emulator(retro_api: &RetroApi) {
+    unsafe {
+        (retro_api.run)();
+    }
+}
+
 fn load_game(retro_api: &RetroApi) {
     let path = "assets/games/Super Mario Bros.nes";
     let mut game = File::open(path).unwrap();
@@ -187,7 +198,7 @@ fn load_game(retro_api: &RetroApi) {
     let slice = buffer.into_boxed_slice();
 
     println!("Read {} bytes", size);
-    println!("bytes: {:#?}", slice);
+    //println!("bytes: {:#?}", slice);
 
     let raw = Box::into_raw(slice);
     std::mem::forget(raw);
