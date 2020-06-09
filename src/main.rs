@@ -3,17 +3,24 @@ extern crate libc;
 extern crate libloading;
 
 use glfw::{Action, Context, Key};
-use libretro_sys::{CoreAPI, SystemInfo, EnvironmentFn, VideoRefreshFn, AudioSampleFn, AudioSampleBatchFn, InputPollFn, InputStateFn};
+use libloading::{Library, Symbol};
+use libretro_sys::{
+    AudioSampleBatchFn, AudioSampleFn, CoreAPI, EnvironmentFn, GameInfo, InputPollFn, InputStateFn,
+    SystemInfo, VideoRefreshFn,
+};
 use std::env;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::ptr;
-use libloading::{Symbol, Library};
 use users::get_current_username;
+use std::fs::File;
+use std::io::Read;
 
 pub struct RetroApi<'a> {
     init: Symbol<'a, unsafe extern "C" fn()>,
     api_version: Symbol<'a, unsafe extern "C" fn() -> libc::c_uint>,
     get_system_info: Symbol<'a, unsafe extern "C" fn(info: *mut SystemInfo)>,
+
+    load_game: Symbol<'a, unsafe extern "C" fn(game: *const GameInfo) -> bool>,
 
     set_environment_callback: Symbol<'a, unsafe extern "C" fn(callback: EnvironmentFn)>,
     set_video_refresh_callback: Symbol<'a, unsafe extern "C" fn(callback: VideoRefreshFn)>,
@@ -31,6 +38,7 @@ fn main() {
     let retro_api = init_retro_api(&lib);
     get_version(&retro_api);
     get_system_info(&retro_api);
+    load_game(&retro_api);
 
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
 
@@ -64,40 +72,35 @@ extern "C" fn set_environment_cb(cmd: libc::c_uint, data: *mut libc::c_void) -> 
             //TODO: how to cast and set a *void that is **char ??
             match get_current_username() {
                 Some(uname) => println!("username: {}", uname.to_str().unwrap()),
-                None        => println!("could not get user name"),
+                None => println!("could not get user name"),
             }
-        },
+        }
         libretro_sys::ENVIRONMENT_GET_LOG_INTERFACE => {
             println!("ENV: GET LOG INTERFACE");
-        },
+        }
         libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
             println!("ENV: GET CAN DUPE");
             //TODO: signal true to allow duped frames
-        },
+        }
         libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
             println!("ENV: SET PIXEL FORMAT");
-        },
-        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
-            println!("ENV: SYSTEM DIRECTORY")
-        },
-        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => {
-            println!("ENV: SAVE DIRECTORY")
-        },
-        libretro_sys::ENVIRONMENT_SHUTDOWN => {
-            println!("ENV: SHUTDOWN REQUESTED")
-        },
-        libretro_sys::ENVIRONMENT_GET_VARIABLE => {
-            println!("ENV: GET VARIABLE")
-        },
-        _ => {
-            println!("UNKNOWN ENV CMD: {}", cmd)
         }
+        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => println!("ENV: SYSTEM DIRECTORY"),
+        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => println!("ENV: SAVE DIRECTORY"),
+        libretro_sys::ENVIRONMENT_SHUTDOWN => println!("ENV: SHUTDOWN REQUESTED"),
+        libretro_sys::ENVIRONMENT_GET_VARIABLE => println!("ENV: GET VARIABLE"),
+        _ => println!("UNKNOWN ENV CMD: {}", cmd),
     }
 
     false
 }
 
-extern "C" fn video_refresh_cb(data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+extern "C" fn video_refresh_cb(
+    data: *const libc::c_void,
+    width: libc::c_uint,
+    height: libc::c_uint,
+    pitch: libc::size_t,
+) {
     println!("video_refresh called!");
 }
 
@@ -114,11 +117,15 @@ extern "C" fn input_poll_cb() {
     println!("input_poll_called")
 }
 
-extern "C" fn input_state_cb(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+extern "C" fn input_state_cb(
+    port: libc::c_uint,
+    device: libc::c_uint,
+    index: libc::c_uint,
+    id: libc::c_uint,
+) -> i16 {
     println!("input_state called");
     0
 }
-
 
 fn init_retro_api(lib: &Library) -> RetroApi {
     unsafe {
@@ -126,12 +133,13 @@ fn init_retro_api(lib: &Library) -> RetroApi {
             init: lib.get(b"retro_init").unwrap(),
             api_version: lib.get(b"retro_api_version").unwrap(),
             get_system_info: lib.get(b"retro_get_system_info").unwrap(),
+            load_game: lib.get(b"retro_load_game").unwrap(),
             set_environment_callback: lib.get(b"retro_set_environment").unwrap(),
             set_video_refresh_callback: lib.get(b"retro_set_video_refresh").unwrap(),
             set_audio_sample_callback: lib.get(b"retro_set_audio_sample").unwrap(),
             set_audio_sample_batch_callback: lib.get(b"retro_set_audio_sample_batch").unwrap(),
             set_input_poll_callback: lib.get(b"retro_set_input_poll").unwrap(),
-            set_input_state_callback: lib.get(b"retro_set_input_state").unwrap()
+            set_input_state_callback: lib.get(b"retro_set_input_state").unwrap(),
         };
 
         (core_api.set_environment_callback)(set_environment_cb);
@@ -144,6 +152,32 @@ fn init_retro_api(lib: &Library) -> RetroApi {
         (core_api.init)();
 
         return core_api;
+    }
+}
+
+fn load_game(retro_api: &RetroApi) {
+    let path = "assets/games/Super Mario Bros.nes";
+    let mut game = File::open(path).unwrap();
+    let mut sbuffer = String::new();
+    let size = game.read_to_string(&mut sbuffer).unwrap();
+
+    println!("Read {} bytes", size);
+
+    unsafe {
+        let c_str_path = CString::new(path).unwrap();
+        let c_str_data = CString::new(sbuffer).unwrap();
+        let mut game_info = GameInfo {
+            path: c_str_path.as_ptr(),
+            size: size as libc::size_t,
+            data: c_str_data.as_ptr() as *mut libc::c_void,
+            meta: ptr::null(),
+        };
+
+        let raw_ptr = &mut game_info as *mut GameInfo;
+        let result = (retro_api.load_game)(raw_ptr);
+        if !result {
+            panic!("failed to load game")
+        }
     }
 }
 
