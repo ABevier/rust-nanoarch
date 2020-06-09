@@ -74,25 +74,49 @@ extern "C" fn set_environment_cb(cmd: libc::c_uint, data: *mut libc::c_void) -> 
                 Some(uname) => println!("username: {}", uname.to_str().unwrap()),
                 None => println!("could not get user name"),
             }
+            false
         }
         libretro_sys::ENVIRONMENT_GET_LOG_INTERFACE => {
             println!("ENV: GET LOG INTERFACE");
+            false
         }
         libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
             println!("ENV: GET CAN DUPE");
             //TODO: signal true to allow duped frames
+            false
         }
         libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
             println!("ENV: SET PIXEL FORMAT");
+            true
         }
-        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => println!("ENV: SYSTEM DIRECTORY"),
-        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => println!("ENV: SAVE DIRECTORY"),
-        libretro_sys::ENVIRONMENT_SHUTDOWN => println!("ENV: SHUTDOWN REQUESTED"),
-        libretro_sys::ENVIRONMENT_GET_VARIABLE => println!("ENV: GET VARIABLE"),
-        _ => println!("UNKNOWN ENV CMD: {}", cmd),
-    }
+        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+            println!("ENV: GET SYSTEM DIRECTORY");
+            unsafe {
+                let mut dir = CString::new(".").unwrap();
+                let mut ptr = data as *mut *const libc::c_char;
+                let mut dir_ptr = dir.as_ptr();
+                *ptr = dir_ptr;
+            }
 
-    false
+            true
+        },
+        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => {
+            println!("ENV: SAVE DIRECTORY");
+            false
+        }
+        libretro_sys::ENVIRONMENT_SHUTDOWN => {
+            println!("ENV: SHUTDOWN REQUESTED");
+            false
+        },
+        libretro_sys::ENVIRONMENT_GET_VARIABLE => {
+            println!("ENV: GET VARIABLE");
+            false
+        },
+        _ => {
+            println!("UNKNOWN ENV CMD: {}", cmd);
+            false
+        },
+    }
 }
 
 extern "C" fn video_refresh_cb(
@@ -158,18 +182,27 @@ fn init_retro_api(lib: &Library) -> RetroApi {
 fn load_game(retro_api: &RetroApi) {
     let path = "assets/games/Super Mario Bros.nes";
     let mut game = File::open(path).unwrap();
-    let mut sbuffer = String::new();
-    let size = game.read_to_string(&mut sbuffer).unwrap();
+    let mut buffer = Vec::new();
+    let size = game.read_to_end(&mut buffer).unwrap();
+    let slice = buffer.into_boxed_slice();
 
     println!("Read {} bytes", size);
+    println!("bytes: {:#?}", slice);
+
+    let raw = Box::into_raw(slice);
+    std::mem::forget(raw);
 
     unsafe {
         let c_str_path = CString::new(path).unwrap();
-        let c_str_data = CString::new(sbuffer).unwrap();
+
+        let sz = size as libc::size_t;
+
+        println!("size={}", sz);
+
         let mut game_info = GameInfo {
-            path: c_str_path.as_ptr(),
-            size: size as libc::size_t,
-            data: c_str_data.as_ptr() as *mut libc::c_void,
+            path: ptr::null(),
+            size: sz,
+            data: raw as *mut libc::c_void,
             meta: ptr::null(),
         };
 
