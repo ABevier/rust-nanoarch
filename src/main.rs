@@ -3,17 +3,24 @@ extern crate libc;
 extern crate libloading;
 
 use glfw::{Action, Context, Key};
-use libretro_sys::{CoreAPI, SystemInfo, EnvironmentFn};
+use libretro_sys::{CoreAPI, SystemInfo, EnvironmentFn, VideoRefreshFn, AudioSampleFn, AudioSampleBatchFn, InputPollFn, InputStateFn};
 use std::env;
 use std::ffi::CStr;
 use std::ptr;
 use libloading::{Symbol, Library};
+use users::get_current_username;
 
 pub struct RetroApi<'a> {
     init: Symbol<'a, unsafe extern "C" fn()>,
     api_version: Symbol<'a, unsafe extern "C" fn() -> libc::c_uint>,
     get_system_info: Symbol<'a, unsafe extern "C" fn(info: *mut SystemInfo)>,
+
     set_environment_callback: Symbol<'a, unsafe extern "C" fn(callback: EnvironmentFn)>,
+    set_video_refresh_callback: Symbol<'a, unsafe extern "C" fn(callback: VideoRefreshFn)>,
+    set_audio_sample_callback: Symbol<'a, unsafe extern "C" fn(callback: AudioSampleFn)>,
+    set_audio_sample_batch_callback: Symbol<'a, unsafe extern "C" fn(callback: AudioSampleBatchFn)>,
+    set_input_poll_callback: Symbol<'a, unsafe extern "C" fn(callback: InputPollFn)>,
+    set_input_state_callback: Symbol<'a, unsafe extern "C" fn(callback: InputStateFn)>,
 }
 
 fn main() {
@@ -50,10 +57,68 @@ fn main() {
 }
 
 extern "C" fn set_environment_cb(cmd: libc::c_uint, data: *mut libc::c_void) -> bool {
-    println!("set_environment called!");
     //TODO: how do I access my window or any other state...????
+    match cmd {
+        libretro_sys::ENVIRONMENT_GET_USERNAME => {
+            println!("ENV: GET USER NAME");
+            //TODO: how to cast and set a *void that is **char ??
+            match get_current_username() {
+                Some(uname) => println!("username: {}", uname.to_str().unwrap()),
+                None        => println!("could not get user name"),
+            }
+        },
+        libretro_sys::ENVIRONMENT_GET_LOG_INTERFACE => {
+            println!("ENV: GET LOG INTERFACE");
+        },
+        libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
+            println!("ENV: GET CAN DUPE");
+            //TODO: signal true to allow duped frames
+        },
+        libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            println!("ENV: SET PIXEL FORMAT");
+        },
+        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+            println!("ENV: SYSTEM DIRECTORY")
+        },
+        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => {
+            println!("ENV: SAVE DIRECTORY")
+        },
+        libretro_sys::ENVIRONMENT_SHUTDOWN => {
+            println!("ENV: SHUTDOWN REQUESTED")
+        },
+        libretro_sys::ENVIRONMENT_GET_VARIABLE => {
+            println!("ENV: GET VARIABLE")
+        },
+        _ => {
+            println!("UNKNOWN ENV CMD: {}", cmd)
+        }
+    }
+
     false
 }
+
+extern "C" fn video_refresh_cb(data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    println!("video_refresh called!");
+}
+
+extern "C" fn audio_sample_cb(left: i16, right: i16) {
+    println!("audio_sample_called");
+}
+
+extern "C" fn audio_sample_batch(data: *const i16, frames: libc::size_t) -> libc::size_t {
+    println!("audio_sample_batch_called");
+    0
+}
+
+extern "C" fn input_poll_cb() {
+    println!("input_poll_called")
+}
+
+extern "C" fn input_state_cb(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("input_state called");
+    0
+}
+
 
 fn init_retro_api(lib: &Library) -> RetroApi {
     unsafe {
@@ -62,9 +127,19 @@ fn init_retro_api(lib: &Library) -> RetroApi {
             api_version: lib.get(b"retro_api_version").unwrap(),
             get_system_info: lib.get(b"retro_get_system_info").unwrap(),
             set_environment_callback: lib.get(b"retro_set_environment").unwrap(),
+            set_video_refresh_callback: lib.get(b"retro_set_video_refresh").unwrap(),
+            set_audio_sample_callback: lib.get(b"retro_set_audio_sample").unwrap(),
+            set_audio_sample_batch_callback: lib.get(b"retro_set_audio_sample_batch").unwrap(),
+            set_input_poll_callback: lib.get(b"retro_set_input_poll").unwrap(),
+            set_input_state_callback: lib.get(b"retro_set_input_state").unwrap()
         };
 
         (core_api.set_environment_callback)(set_environment_cb);
+        (core_api.set_video_refresh_callback)(video_refresh_cb);
+        (core_api.set_audio_sample_callback)(audio_sample_cb);
+        (core_api.set_audio_sample_batch_callback)(audio_sample_batch);
+        (core_api.set_input_poll_callback)(input_poll_cb);
+        (core_api.set_input_state_callback)(input_state_cb);
 
         (core_api.init)();
 
